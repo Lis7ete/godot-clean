@@ -1,6 +1,6 @@
 [package]
 name = "godot-clean"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 authors = ["Lis7ete"]
 description = "A blazing-fast parallel CLI linter and cleanup tool for Godot projects"

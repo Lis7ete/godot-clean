@@ -13,6 +13,7 @@ pub struct ProjectFiles {
     pub assets: Vec<PathBuf>,
     pub import_files: Vec<PathBuf>,
     pub all_existing_res_paths: HashSet<String>,
+    pub all_existing_dir_paths: HashSet<String>,
     pub uid_map: HashMap<String, String>, // uid -> res:// path
     pub scan_errors: Vec<String>,
 }
@@ -36,9 +37,21 @@ pub fn scan_project(root: &Path) -> ProjectFiles {
         ..Default::default()
     };
 
+    // Root folder res:// itself is a valid directory
+    files.all_existing_dir_paths.insert("res://".to_string());
+    files.all_existing_dir_paths.insert("res:///".to_string());
+
     let walker = WalkDir::new(root).into_iter().filter_entry(|e| {
         let name = e.file_name().to_string_lossy();
-        !name.starts_with(".godot") && !name.starts_with(".git") && name != "target"
+        // Skip .godot cache, .git, and target
+        if name.starts_with(".godot") || name.starts_with(".git") || name == "target" {
+            return false;
+        }
+        // Skip directories containing .gdignore
+        if e.file_type().is_dir() && e.path().join(".gdignore").exists() {
+            return false;
+        }
+        true
     });
 
     for entry_res in walker {
@@ -50,10 +63,6 @@ pub fn scan_project(root: &Path) -> ProjectFiles {
             }
         };
 
-        if !entry.file_type().is_file() {
-            continue;
-        }
-
         let path = entry.path().to_path_buf();
         let rel_path = match path.strip_prefix(root) {
             Ok(p) => p,
@@ -63,7 +72,20 @@ pub fn scan_project(root: &Path) -> ProjectFiles {
             }
         };
 
-        let res_path = format!("res://{}", rel_path.to_string_lossy().replace('\\', "/"));
+        let rel_str = rel_path.to_string_lossy().replace('\\', "/");
+        if rel_str.is_empty() {
+            continue;
+        }
+
+        if entry.file_type().is_dir() {
+            let res_dir_no_slash = format!("res://{}", rel_str);
+            let res_dir_with_slash = format!("res://{}/", rel_str);
+            files.all_existing_dir_paths.insert(res_dir_no_slash);
+            files.all_existing_dir_paths.insert(res_dir_with_slash);
+            continue;
+        }
+
+        let res_path = format!("res://{}", rel_str);
         files.all_existing_res_paths.insert(res_path.clone());
 
         if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
@@ -78,7 +100,6 @@ pub fn scan_project(root: &Path) -> ProjectFiles {
                     // In Godot 4, .uid files contain the UID string for a sibling file
                     if let Ok(uid_content) = fs::read_to_string(&path) {
                         let uid = uid_content.trim().to_string();
-                        // Corresponds to resource without .uid extension
                         let target_res = res_path.trim_end_matches(".uid").to_string();
                         files.uid_map.insert(uid, target_res);
                     }

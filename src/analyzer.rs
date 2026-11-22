@@ -37,10 +37,8 @@ struct FileScanOutput {
 pub fn analyze_project(files: &ProjectFiles) -> AnalysisResult {
     let res_regex = Regex::new(r#"res://[a-zA-Z0-9_\-/\.\s]+"#).unwrap();
     let uid_regex = Regex::new(r#"uid://[a-zA-Z0-9]+"#).unwrap();
-    // Relative paths in quotes, e.g. "bullet.tscn", "./sub/player.gd"
     let rel_regex = Regex::new(r#"["'](\.{1,2}/[^"'\r\n]+|[a-zA-Z0-9_\-]+\.(?:tscn|tres|gd|cs|png|svg|wav|ogg))["']"#).unwrap();
 
-    // Collect all candidate files to scan
     let mut files_to_scan = Vec::new();
     let project_godot = files.root.join("project.godot");
     if project_godot.is_file() {
@@ -51,7 +49,6 @@ pub fn analyze_project(files: &ProjectFiles) -> AnalysisResult {
     files_to_scan.extend(files.scripts.clone());
     files_to_scan.extend(files.shaders.clone());
 
-    // Parallel scanning with Rayon!
     let scan_outputs: Vec<FileScanOutput> = files_to_scan
         .par_iter()
         .map(|path| {
@@ -65,7 +62,6 @@ pub fn analyze_project(files: &ProjectFiles) -> AnalysisResult {
         })
         .collect();
 
-    // Aggregate results from threads
     let mut all_referenced: HashSet<String> = HashSet::new();
     let mut broken_references: Vec<BrokenReference> = Vec::new();
     let mut read_errors: Vec<String> = Vec::new();
@@ -167,6 +163,24 @@ fn scan_single_file(
                 raw
             };
 
+            // If it's a directory reference (ends with / or matches a known directory)
+            let is_dir = clean.ends_with('/') || files.all_existing_dir_paths.contains(clean);
+            if is_dir {
+                let clean_with_slash = format!("{}/", clean.trim_end_matches('/'));
+                let clean_no_slash = clean.trim_end_matches('/');
+                if !files.all_existing_dir_paths.contains(&clean_with_slash)
+                    && !files.all_existing_dir_paths.contains(clean_no_slash)
+                {
+                    broken.push(BrokenReference {
+                        source_file: rel_source.clone(),
+                        line_number: line_num,
+                        broken_path: clean.to_string(),
+                        reason: "Directory does not exist in project".to_string(),
+                    });
+                }
+                continue;
+            }
+
             referenced.insert(clean.to_string());
             if !files.all_existing_res_paths.contains(clean) {
                 broken.push(BrokenReference {
@@ -184,7 +198,6 @@ fn scan_single_file(
             if let Some(target_res) = files.uid_map.get(uid) {
                 referenced.insert(target_res.clone());
             } else {
-                // If it's not a definition on this same line
                 if !line.contains(&format!("uid=\"{}\"", uid)) {
                     broken.push(BrokenReference {
                         source_file: rel_source.clone(),
